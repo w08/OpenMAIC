@@ -327,18 +327,22 @@ function ensureBuiltInProviders(state: Partial<SettingsState>): void {
       // New provider: add with defaults
       state.providersConfig![providerId] = defaultConfig[providerId];
     } else {
-      // Existing provider: merge new models & metadata
+      // Existing provider: merge new models & prune removed ones
       const provider = PROVIDERS[providerId];
       const existing = state.providersConfig![providerId];
 
+      const builtInModelIds = new Set(provider.models.map((m) => m.id));
       const existingModelIds = new Set(existing.models?.map((m) => m.id) || []);
       const newModels = provider.models.filter((m) => !existingModelIds.has(m.id));
-      const mergedModels =
-        newModels.length > 0 ? [...newModels, ...(existing.models || [])] : existing.models;
+      // Keep user-added models (not in built-in set) + all current built-in models
+      const userAddedModels = (existing.models || []).filter((m) => !builtInModelIds.has(m.id) && !provider.models.some((bm) => bm.id === m.id));
+      const mergedModels = [...newModels, ...provider.models.filter((m) => existingModelIds.has(m.id)), ...userAddedModels];
+      // If nothing changed, keep existing to preserve order
+      const finalModels = mergedModels.length === (existing.models || []).length && newModels.length === 0 ? existing.models : mergedModels;
 
       state.providersConfig![providerId] = {
         ...existing,
-        models: mergedModels,
+        models: finalModels,
         name: existing.name || provider.name,
         type: existing.type || provider.type,
         defaultBaseUrl: existing.defaultBaseUrl || provider.defaultBaseUrl,

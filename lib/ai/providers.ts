@@ -837,6 +837,140 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
       },
     ],
   },
+
+  'github-copilot': {
+    id: 'github-copilot',
+    name: 'GitHub Copilot',
+    type: 'openai',
+    defaultBaseUrl: 'https://api.individual.githubcopilot.com',
+    requiresApiKey: true,
+    icon: '/logos/github-copilot.svg',
+    models: [
+      // GPT models
+      {
+        id: 'gpt-5.2',
+        name: 'GPT-5.2',
+        contextWindow: 400000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-5.1',
+        name: 'GPT-5.1',
+        contextWindow: 400000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-5',
+        name: 'GPT-5',
+        contextWindow: 400000,
+        outputWindow: 128000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-5-mini',
+        name: 'GPT-5 Mini',
+        contextWindow: 400000,
+        outputWindow: 64000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        contextWindow: 128000,
+        outputWindow: 16384,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gpt-4.1',
+        name: 'GPT-4.1',
+        contextWindow: 1047576,
+        outputWindow: 32768,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      // Claude models
+      {
+        id: 'claude-opus-4.6',
+        name: 'Claude Opus 4.6',
+        contextWindow: 200000,
+        outputWindow: 32000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-opus-4.5',
+        name: 'Claude Opus 4.5',
+        contextWindow: 200000,
+        outputWindow: 32000,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-sonnet-4.6',
+        name: 'Claude Sonnet 4.6',
+        contextWindow: 200000,
+        outputWindow: 16384,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-sonnet-4.5',
+        name: 'Claude Sonnet 4.5',
+        contextWindow: 200000,
+        outputWindow: 16384,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        contextWindow: 200000,
+        outputWindow: 16384,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'claude-haiku-4.5',
+        name: 'Claude Haiku 4.5',
+        contextWindow: 200000,
+        outputWindow: 8192,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      // Gemini models
+      {
+        id: 'gemini-3.1-pro-preview',
+        name: 'Gemini 3.1 Pro Preview',
+        contextWindow: 1048576,
+        outputWindow: 65536,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gemini-3-pro-preview',
+        name: 'Gemini 3 Pro Preview',
+        contextWindow: 1048576,
+        outputWindow: 65536,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gemini-3-flash-preview',
+        name: 'Gemini 3 Flash Preview',
+        contextWindow: 1048576,
+        outputWindow: 65536,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      {
+        id: 'gemini-2.5-pro',
+        name: 'Gemini 2.5 Pro',
+        contextWindow: 1048576,
+        outputWindow: 65536,
+        capabilities: { streaming: true, tools: true, vision: true },
+      },
+      // Other
+      {
+        id: 'grok-code-fast-1',
+        name: 'Grok Code Fast 1',
+        contextWindow: 131072,
+        outputWindow: 32768,
+        capabilities: { streaming: true, tools: true, vision: false },
+      },
+    ],
+  },
 };
 
 /**
@@ -969,6 +1103,67 @@ export function getModel(config: ModelConfig): ModelWithInfo {
       if (config.providerId !== 'openai') {
         const providerId = config.providerId;
         openaiOptions.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
+          // GitHub Copilot: add required Copilot-specific headers
+          // and strip unsupported fields
+          if (providerId === 'github-copilot' && init) {
+            const headers = new Headers(init.headers);
+            headers.set('Copilot-Integration-Id', 'vscode-chat');
+            headers.set('Editor-Version', 'vscode/1.100.0');
+            let isStreaming = false;
+            if (init.body && typeof init.body === 'string') {
+              try {
+                const body = JSON.parse(init.body);
+                isStreaming = !!body.stream;
+                // Copilot API doesn't support various OpenAI-specific options
+                delete body.stream_options;
+                delete body.response_format;
+                delete body.logprobs;
+                delete body.top_logprobs;
+                delete body.parallel_tool_calls;
+                delete body.service_tier;
+                delete body.store;
+                init = { ...init, headers, body: JSON.stringify(body) };
+              } catch {
+                init = { ...init, headers };
+              }
+            } else {
+              init = { ...init, headers };
+            }
+            const resp = await globalThis.fetch(url, init);
+            // For non-streaming JSON responses, patch missing fields that
+            // the OpenAI SDK schema requires but Copilot omits for non-GPT models
+            // (e.g. choices[].index is missing for Claude/Gemini models).
+            if (resp.ok && !isStreaming && resp.headers.get('content-type')?.includes('json')) {
+              const text = await resp.text();
+              try {
+                const json = JSON.parse(text);
+                if (Array.isArray(json.choices)) {
+                  let patched = false;
+                  for (let i = 0; i < json.choices.length; i++) {
+                    if (json.choices[i].index === undefined) {
+                      json.choices[i].index = i;
+                      patched = true;
+                    }
+                  }
+                  if (patched) {
+                    return new Response(JSON.stringify(json), {
+                      status: resp.status,
+                      statusText: resp.statusText,
+                      headers: resp.headers,
+                    });
+                  }
+                }
+              } catch { /* use original */ }
+              // Return reconstructed response with same body
+              return new Response(text, {
+                status: resp.status,
+                statusText: resp.statusText,
+                headers: resp.headers,
+              });
+            }
+            return resp;
+          }
+
           // Read thinking config from globalThis (set by thinking-context.ts)
           const thinkingCtx = (globalThis as Record<string, unknown>).__thinkingContext as
             | { getStore?: () => unknown }

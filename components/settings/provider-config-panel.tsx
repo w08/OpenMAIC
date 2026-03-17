@@ -36,6 +36,7 @@ import type { ProviderConfig } from '@/lib/ai/providers';
 import type { ProvidersConfig } from '@/lib/types/settings';
 import { formatContextWindow } from './utils';
 import { cn } from '@/lib/utils';
+import { CopilotLogin } from './copilot-login';
 
 interface ProviderConfigPanelProps {
   provider: ProviderConfig;
@@ -161,7 +162,23 @@ export function ProviderConfigPanel({
         </div>
       )}
 
-      {/* API Key */}
+      {/* API Key / Copilot Login */}
+      {provider.id === 'github-copilot' ? (
+        <div className="space-y-2">
+          <Label>{t('settings.copilotAuth') || 'GitHub Copilot Authentication'}</Label>
+          <CopilotLogin
+            currentToken={apiKey}
+            onLoginSuccess={(githubToken) => {
+              handleApiKeyChange(githubToken);
+              onSave();
+            }}
+            onLogout={() => {
+              handleApiKeyChange('');
+              onSave();
+            }}
+          />
+        </div>
+      ) : (
       <div className="space-y-2">
         <Label>{t('settings.apiSecret')}</Label>
         <div className="flex gap-2">
@@ -235,6 +252,7 @@ export function ProviderConfigPanel({
           </label>
         </div>
       </div>
+      )}
 
       {/* API Host */}
       <div className="space-y-2">

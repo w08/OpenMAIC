@@ -185,17 +185,35 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
     if (previewing) {
       audioRef.current?.pause();
       audioRef.current = null;
+      speechSynthesis.cancel();
       setPreviewing(false);
       return;
     }
     setPreviewing(true);
     try {
+      const previewText = '你好，欢迎来到AI课堂！让我们一起学习吧。';
+
+      // Handle browser-native TTS client-side
+      if (ttsProviderId === 'browser-native-tts') {
+        const utterance = new SpeechSynthesisUtterance(previewText);
+        if (ttsVoice) utterance.voice = speechSynthesis.getVoices().find((v) => v.name === ttsVoice) || null;
+        utterance.rate = ttsSpeed ?? 1.0;
+        utterance.onend = () => {
+          setPreviewing(false);
+        };
+        utterance.onerror = () => {
+          setPreviewing(false);
+        };
+        speechSynthesis.speak(utterance);
+        return;
+      }
+
       const providerConfig = ttsProvidersConfig[ttsProviderId];
       const res = await fetch('/api/generate/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: '你好，欢迎来到AI课堂！让我们一起学习吧。',
+          text: previewText,
           audioId: 'preview',
           ttsProviderId,
           ttsVoice,
@@ -221,7 +239,7 @@ export function MediaPopover({ onSettingsOpen }: MediaPopoverProps) {
     } catch {
       setPreviewing(false);
     }
-  }, [ttsProviderId, ttsVoice, ttsProvidersConfig, previewing]);
+  }, [ttsProviderId, ttsVoice, ttsSpeed, ttsProvidersConfig, previewing]);
 
   // ASR: only available providers
   const asrGroups = useMemo(
