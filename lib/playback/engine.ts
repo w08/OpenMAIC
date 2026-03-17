@@ -36,6 +36,7 @@ import type {
 import type { AudioPlayer } from '@/lib/utils/audio-player';
 import { ActionEngine } from '@/lib/action/engine';
 import { useCanvasStore } from '@/lib/store/canvas';
+import { useSettingsStore } from '@/lib/store/settings';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('PlaybackEngine');
@@ -152,6 +153,10 @@ export class PlaybackEngine {
       if (!this.currentTrigger && this.audioPlayer.isPlaying()) {
         this.audioPlayer.pause();
       }
+      // Also pause browser-native speech synthesis
+      if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) {
+        speechSynthesis.pause();
+      }
     } else if (this.mode === 'live') {
       this.setMode('paused');
       this.currentTopicState = 'pending';
@@ -178,7 +183,9 @@ export class PlaybackEngine {
     } else {
       // Resume lecture
       this.setMode('playing');
-      if (this.audioPlayer.hasActiveAudio()) {
+      if (typeof speechSynthesis !== 'undefined' && speechSynthesis.paused) {
+        speechSynthesis.resume();
+      } else if (this.audioPlayer.hasActiveAudio()) {
         // Audio is paused — resume it; TTS onend will call processNext
         this.audioPlayer.resume();
       } else if (this.speechTimerRemaining > 0) {
@@ -203,6 +210,7 @@ export class PlaybackEngine {
     // synchronous onend callbacks (see handleUserInterrupt for details).
     this.setMode('idle');
     this.audioPlayer.stop();
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
     this.actionEngine.clearEffects();
     if (this.triggerDelayTimer) {
       clearTimeout(this.triggerDelayTimer);
@@ -311,6 +319,7 @@ export class PlaybackEngine {
     this.currentTopicState = 'active';
     this.setMode('live');
     this.audioPlayer.stop();
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
     this.callbacks.onUserInterrupt?.(text);
   }
 
@@ -433,14 +442,41 @@ export class PlaybackEngine {
           }, readingMs);
         };
 
+        // Try browser-native TTS when no pre-generated audio is available
+        const tryBrowserNativeTTS = (): boolean => {
+          const settings = useSettingsStore.getState();
+          if (settings.ttsProviderId !== 'browser-native-tts') return false;
+          if (typeof speechSynthesis === 'undefined') return false;
+          if (!speechAction.text) return false;
+
+          const utterance = new SpeechSynthesisUtterance(speechAction.text);
+          if (settings.ttsVoice) {
+            utterance.voice =
+              speechSynthesis.getVoices().find((v) => v.name === settings.ttsVoice) || null;
+          }
+          utterance.rate = (this.callbacks.getPlaybackSpeed?.() ?? 1) * (settings.ttsSpeed ?? 1.0);
+          utterance.onend = () => {
+            this.callbacks.onSpeechEnd?.();
+            if (this.mode === 'playing') this.processNext();
+          };
+          utterance.onerror = () => {
+            this.callbacks.onSpeechEnd?.();
+            if (this.mode === 'playing') this.processNext();
+          };
+          speechSynthesis.speak(utterance);
+          return true;
+        };
+
         this.audioPlayer
           .play(speechAction.audioId || '')
           .then((audioStarted) => {
-            if (!audioStarted) scheduleReadingTimer();
+            if (!audioStarted) {
+              if (!tryBrowserNativeTTS()) scheduleReadingTimer();
+            }
           })
           .catch((err) => {
             log.error('TTS error:', err);
-            scheduleReadingTimer();
+            if (!tryBrowserNativeTTS()) scheduleReadingTimer();
           });
         break;
       }

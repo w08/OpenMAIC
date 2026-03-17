@@ -28,6 +28,7 @@ import type {
   WbDeleteAction,
   WbDrawLineAction,
 } from '@/lib/types/action';
+import { useSettingsStore } from '@/lib/store/settings';
 import katex from 'katex';
 import { createLogger } from '@/lib/logger';
 
@@ -163,6 +164,15 @@ export class ActionEngine {
   // ==================== Synchronous — Speech ====================
 
   private async executeSpeech(action: SpeechAction): Promise<void> {
+    // If no pre-generated audioId, try browser-native TTS
+    if (!action.audioId) {
+      const settings = useSettingsStore.getState();
+      if (settings.ttsProviderId === 'browser-native-tts' && action.text) {
+        return this.executeBrowserNativeSpeech(action, settings.ttsVoice, settings.ttsSpeed);
+      }
+      return; // No audio and not browser-native — skip
+    }
+
     if (!this.audioPlayer) return;
 
     return new Promise<void>((resolve) => {
@@ -172,6 +182,29 @@ export class ActionEngine {
           if (!audioStarted) resolve();
         })
         .catch(() => resolve());
+    });
+  }
+
+  /** Play speech using browser Web Speech API */
+  private executeBrowserNativeSpeech(
+    action: SpeechAction,
+    voice?: string,
+    speed?: number,
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (typeof speechSynthesis === 'undefined') {
+        resolve();
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(action.text);
+      if (voice) {
+        utterance.voice =
+          speechSynthesis.getVoices().find((v) => v.name === voice) || null;
+      }
+      utterance.rate = speed ?? action.speed ?? 1.0;
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+      speechSynthesis.speak(utterance);
     });
   }
 
