@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
     if (json.access_token && typeof json.access_token === 'string') {
       return NextResponse.json({
         access_token: json.access_token,
+        refresh_token: json.refresh_token || undefined,
+        refresh_token_expires_in: json.refresh_token_expires_in || undefined,
         status: 'complete',
       });
     }

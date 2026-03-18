@@ -9,6 +9,9 @@ import type { NextRequest } from 'next/server';
 import { getModel, parseModelString, type ModelWithInfo } from '@/lib/ai/providers';
 import { resolveApiKey, resolveBaseUrl, resolveProxy } from '@/lib/server/provider-config';
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> a6cfe73 (token8小时过期BUG修复，改成RefreshToken)
 import {
   resolveCopilotToken,
   clearCopilotTokenCache,
@@ -20,6 +23,7 @@ import {
   updateCopilotGithubToken,
   clearCopilotGithubToken,
 } from '@/lib/server/copilot-token-store';
+<<<<<<< HEAD
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { createLogger } from '@/lib/logger';
 
@@ -28,6 +32,11 @@ const log = createLogger('ResolveModel');
 import { resolveCopilotToken } from '@/lib/server/copilot-token';
 import { loadCopilotGithubToken } from '@/lib/server/copilot-token-store';
 >>>>>>> 49e8555 (支持保存token到本地的功能，以适配openClaw)
+=======
+import { createLogger } from '@/lib/logger';
+
+const log = createLogger('ResolveModel');
+>>>>>>> a6cfe73 (token8小时过期BUG修复，改成RefreshToken)
 
 export interface ResolvedModel extends ModelWithInfo {
   /** Original model string (e.g. "openai/gpt-4o-mini") */
@@ -64,17 +73,25 @@ export async function resolveModel(params: {
 
   // GitHub Copilot: if no API key from env/config, try locally persisted token
 <<<<<<< HEAD
+<<<<<<< HEAD
   let usingPersistedToken = false;
 =======
 >>>>>>> 49e8555 (支持保存token到本地的功能，以适配openClaw)
+=======
+  let usingPersistedToken = false;
+>>>>>>> a6cfe73 (token8小时过期BUG修复，改成RefreshToken)
   if (providerId === 'github-copilot' && !apiKey) {
     const savedToken = await loadCopilotGithubToken();
     if (savedToken) {
       apiKey = savedToken;
 <<<<<<< HEAD
+<<<<<<< HEAD
       usingPersistedToken = true;
 =======
 >>>>>>> 49e8555 (支持保存token到本地的功能，以适配openClaw)
+=======
+      usingPersistedToken = true;
+>>>>>>> a6cfe73 (token8小时过期BUG修复，改成RefreshToken)
     }
   }
 

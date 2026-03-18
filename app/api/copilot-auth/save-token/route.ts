@@ -45,8 +45,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await saveCopilotGithubToken(github_token);
-    return NextResponse.json({ saved: true, message: 'Token saved for server-side use' });
+    // Save with optional refresh token
+    const refreshToken = body.refresh_token as string | undefined;
+    const refreshTokenExpiresIn = body.refresh_token_expires_in as number | undefined;
+    await saveCopilotGithubToken(github_token, refreshToken, refreshTokenExpiresIn);
+    return NextResponse.json({
+      saved: true,
+      message: refreshToken
+        ? 'Token saved with refresh token for auto-renewal'
+        : 'Token saved for server-side use',
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Unknown error' },

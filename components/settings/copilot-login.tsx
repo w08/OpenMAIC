@@ -55,6 +55,7 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
   const pollAbortRef = useRef<AbortController | null>(null);
   const [savedToServer, setSavedToServer] = useState(false);
   const [savingToServer, setSavingToServer] = useState(false);
+  const lastRefreshTokenRef = useRef<{ token: string; expiresIn?: number } | null>(null);
 
   const isLoggedIn = !!currentToken;
 
@@ -171,12 +172,24 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
               setState({ step: 'success' });
               onLoginSuccess(tokenData.access_token);
 
-              // If previously saved to server, auto-update with new token
+              // Store refresh token for later save-to-server use
+              if (tokenData.refresh_token) {
+                lastRefreshTokenRef.current = {
+                  token: tokenData.refresh_token,
+                  expiresIn: tokenData.refresh_token_expires_in,
+                };
+              }
+
+              // If previously saved to server, auto-update with new token + refresh token
               if (savedToServer) {
                 fetch('/api/copilot-auth/save-token', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ github_token: tokenData.access_token }),
+                  body: JSON.stringify({
+                    github_token: tokenData.access_token,
+                    refresh_token: tokenData.refresh_token,
+                    refresh_token_expires_in: tokenData.refresh_token_expires_in,
+                  }),
                 }).catch(() => { /* ignore */ });
               }
 
@@ -256,10 +269,15 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
     if (!currentToken) return;
     setSavingToServer(true);
     try {
+      const payload: Record<string, unknown> = { github_token: currentToken };
+      if (lastRefreshTokenRef.current) {
+        payload.refresh_token = lastRefreshTokenRef.current.token;
+        payload.refresh_token_expires_in = lastRefreshTokenRef.current.expiresIn;
+      }
       const res = await fetch('/api/copilot-auth/save-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ github_token: currentToken }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.saved) {

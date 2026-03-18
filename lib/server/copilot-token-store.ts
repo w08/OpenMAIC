@@ -23,6 +23,10 @@ const TOKEN_FILE = path.join(process.cwd(), 'data', 'copilot-token.json');
 interface StoredToken {
   /** GitHub access token (ghu_...) */
   githubToken: string;
+  /** GitHub refresh token for auto-renewal */
+  refreshToken?: string;
+  /** When the refresh token expires (ISO string) */
+  refreshTokenExpiresAt?: string;
   /** When the token was saved (ISO string) */
   savedAt: string;
 }
@@ -37,10 +41,18 @@ async function ensureDataDir() {
 /**
  * Save a GitHub access token to the local file system.
  */
-export async function saveCopilotGithubToken(githubToken: string): Promise<void> {
+export async function saveCopilotGithubToken(
+  githubToken: string,
+  refreshToken?: string,
+  refreshTokenExpiresIn?: number,
+): Promise<void> {
   await ensureDataDir();
   const data: StoredToken = {
     githubToken,
+    refreshToken,
+    refreshTokenExpiresAt: refreshTokenExpiresIn
+      ? new Date(Date.now() + refreshTokenExpiresIn * 1000).toISOString()
+      : undefined,
     savedAt: new Date().toISOString(),
   };
   const tempFile = `${TOKEN_FILE}.${process.pid}.${Date.now()}.tmp`;
@@ -93,8 +105,43 @@ export async function clearCopilotGithubToken(): Promise<void> {
  * Update the cached token (e.g. after re-login).
  * This also updates the file on disk.
  */
-export async function updateCopilotGithubToken(githubToken: string): Promise<void> {
-  await saveCopilotGithubToken(githubToken);
+export async function updateCopilotGithubToken(
+  githubToken: string,
+  refreshToken?: string,
+  refreshTokenExpiresIn?: number,
+): Promise<void> {
+  // Preserve existing refresh token if not provided
+  if (!refreshToken && cachedToken?.refreshToken) {
+    refreshToken = cachedToken.refreshToken;
+    // Keep existing expiry if we have one and no new one
+    if (!refreshTokenExpiresIn && cachedToken.refreshTokenExpiresAt) {
+      const existingExpiry = new Date(cachedToken.refreshTokenExpiresAt).getTime();
+      refreshTokenExpiresIn = Math.max(0, Math.floor((existingExpiry - Date.now()) / 1000));
+    }
+  }
+  await saveCopilotGithubToken(githubToken, refreshToken, refreshTokenExpiresIn);
+}
+
+/**
+ * Load the stored refresh token.
+ * Returns null if no refresh token is saved or it has expired.
+ */
+export async function loadCopilotRefreshToken(): Promise<string | null> {
+  // Ensure cache is loaded
+  await loadCopilotGithubToken();
+
+  if (!cachedToken?.refreshToken) return null;
+
+  // Check if refresh token has expired
+  if (cachedToken.refreshTokenExpiresAt) {
+    const expiresAt = new Date(cachedToken.refreshTokenExpiresAt).getTime();
+    if (Date.now() >= expiresAt) {
+      log.warn('Stored Copilot refresh token has expired');
+      return null;
+    }
+  }
+
+  return cachedToken.refreshToken;
 }
 
 /**

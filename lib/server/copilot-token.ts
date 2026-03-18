@@ -15,6 +15,8 @@ const log = createLogger('CopilotToken');
 
 const COPILOT_TOKEN_URL = 'https://api.github.com/copilot_internal/v2/token';
 const DEFAULT_COPILOT_API_BASE_URL = 'https://api.individual.githubcopilot.com';
+const GITHUB_REFRESH_URL = 'https://github.com/login/oauth/access_token';
+const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 
 /** Refresh 5 minutes before expiry */
 const REFRESH_MARGIN_MS = 300 * 1_000;
@@ -137,4 +139,70 @@ export function clearCopilotTokenCache(githubToken?: string): void {
   } else {
     tokenCache.clear();
   }
+}
+
+/**
+ * Result of refreshing a GitHub access token using a refresh token.
+ */
+export interface GithubRefreshResult {
+  /** New GitHub access token */
+  accessToken: string;
+  /** New refresh token (GitHub rotates them on each use) */
+  refreshToken: string;
+  /** Refresh token expiry in seconds */
+  refreshTokenExpiresIn: number;
+}
+
+/**
+ * Use a GitHub refresh token to obtain a new access token.
+ *
+ * GitHub rotates refresh tokens: each call returns a NEW refresh token
+ * that must replace the old one.
+ *
+ * Returns null if the refresh token is invalid/expired (user must re-login).
+ */
+export async function refreshGithubAccessToken(
+  refreshToken: string,
+): Promise<GithubRefreshResult | null> {
+  log.info('Attempting to refresh GitHub access token...');
+
+  const body = new URLSearchParams({
+    client_id: CLIENT_ID,
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+  });
+
+  const res = await fetch(GITHUB_REFRESH_URL, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    log.error(`GitHub token refresh failed: HTTP ${res.status}`);
+    return null;
+  }
+
+  const json = (await res.json()) as Record<string, unknown>;
+
+  if (json.error) {
+    log.error(`GitHub token refresh error: ${json.error} — ${json.error_description || ''}`);
+    return null;
+  }
+
+  if (typeof json.access_token !== 'string' || !json.access_token) {
+    log.error('GitHub token refresh response missing access_token');
+    return null;
+  }
+
+  log.info('GitHub access token refreshed successfully');
+
+  return {
+    accessToken: json.access_token as string,
+    refreshToken: (json.refresh_token as string) || refreshToken,
+    refreshTokenExpiresIn: (json.refresh_token_expires_in as number) || 15_552_000,
+  };
 }
