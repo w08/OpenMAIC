@@ -41,6 +41,9 @@ yarn-error.log*
 server-providers.yml
 server-providers-*.yml
 
+# locally persisted Copilot token (contains GitHub access token)
+data/copilot-token.json
+
 # vercel
 .vercel
 

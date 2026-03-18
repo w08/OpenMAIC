@@ -15,7 +15,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Loader2, CheckCircle2, XCircle, LogIn, Copy, ExternalLink, LogOut } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, LogIn, Copy, ExternalLink, LogOut, Save } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { cn } from '@/lib/utils';
 
@@ -53,6 +53,8 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
   } | null>(null);
   const [copied, setCopied] = useState(false);
   const pollAbortRef = useRef<AbortController | null>(null);
+  const [savedToServer, setSavedToServer] = useState(false);
+  const [savingToServer, setSavingToServer] = useState(false);
 
   const isLoggedIn = !!currentToken;
 
@@ -61,6 +63,16 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
     return () => {
       pollAbortRef.current?.abort();
     };
+  }, []);
+
+  // Check if token is already saved to server
+  useEffect(() => {
+    fetch('/api/copilot-auth/save-token')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.hasSavedToken) setSavedToServer(true);
+      })
+      .catch(() => { /* ignore */ });
   }, []);
 
   // Validate existing token on mount
@@ -159,6 +171,15 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
               setState({ step: 'success' });
               onLoginSuccess(tokenData.access_token);
 
+              // If previously saved to server, auto-update with new token
+              if (savedToServer) {
+                fetch('/api/copilot-auth/save-token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ github_token: tokenData.access_token }),
+                }).catch(() => { /* ignore */ });
+              }
+
               // Reset back to idle after a brief success display
               setTimeout(() => setState({ step: 'idle' }), 2000);
               return;
@@ -219,8 +240,47 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
     pollAbortRef.current?.abort();
     setState({ step: 'idle' });
     setValidationResult(null);
+    // Also clear server-saved token on logout
+    if (savedToServer) {
+      fetch('/api/copilot-auth/save-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear: true }),
+      }).catch(() => { /* ignore */ });
+      setSavedToServer(false);
+    }
     onLogout();
-  }, [onLogout]);
+  }, [onLogout, savedToServer]);
+
+  const handleSaveToServer = useCallback(async () => {
+    if (!currentToken) return;
+    setSavingToServer(true);
+    try {
+      const res = await fetch('/api/copilot-auth/save-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ github_token: currentToken }),
+      });
+      const data = await res.json();
+      if (data.saved) {
+        setSavedToServer(true);
+      }
+    } catch { /* ignore */ }
+    setSavingToServer(false);
+  }, [currentToken]);
+
+  const handleClearFromServer = useCallback(async () => {
+    setSavingToServer(true);
+    try {
+      await fetch('/api/copilot-auth/save-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clear: true }),
+      });
+      setSavedToServer(false);
+    } catch { /* ignore */ }
+    setSavingToServer(false);
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -267,6 +327,58 @@ export function CopilotLogin({ currentToken, onLoginSuccess, onLogout }: Copilot
               <LogOut className="h-3.5 w-3.5" />
               {t('settings.copilotLogout') || 'Logout'}
             </Button>
+          </div>
+
+          {/* Save to server for API access */}
+          <div className="rounded-lg border border-muted p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium">
+                  {t('settings.copilotSaveToServer') || 'Share token with server'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('settings.copilotSaveToServerDesc') ||
+                    'Save the GitHub token locally so the server can use GitHub Copilot for API calls (e.g. classroom generation)'}
+                </p>
+              </div>
+              {savedToServer ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearFromServer}
+                  disabled={savingToServer}
+                  className="gap-1.5 shrink-0"
+                >
+                  {savingToServer ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <XCircle className="h-3.5 w-3.5" />
+                  )}
+                  {t('settings.copilotClearFromServer') || 'Clear'}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveToServer}
+                  disabled={savingToServer}
+                  className="gap-1.5 shrink-0"
+                >
+                  {savingToServer ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5" />
+                  )}
+                  {t('settings.copilotSaveToServerBtn') || 'Save to server'}
+                </Button>
+              )}
+            </div>
+            {savedToServer && (
+              <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                <CheckCircle2 className="h-3 w-3" />
+                {t('settings.copilotSavedToServer') || 'Token saved — server can use GitHub Copilot'}
+              </div>
+            )}
           </div>
         </div>
       )}

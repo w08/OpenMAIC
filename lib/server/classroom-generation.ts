@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/logger';
 import { parseModelString } from '@/lib/ai/providers';
 import { resolveApiKey } from '@/lib/server/provider-config';
 import { resolveModel } from '@/lib/server/resolve-model';
+import { loadCopilotGithubToken } from '@/lib/server/copilot-token-store';
 import { persistClassroom } from '@/lib/server/classroom-storage';
 import type { UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
@@ -104,7 +105,11 @@ export async function generateClassroom(
 
   // Fail fast if the resolved provider has no API key configured
   const { providerId } = parseModelString(modelString);
-  const apiKey = resolveApiKey(providerId);
+  let apiKey = resolveApiKey(providerId);
+  // For github-copilot, also check locally persisted token
+  if (!apiKey && providerId === 'github-copilot') {
+    apiKey = (await loadCopilotGithubToken()) || '';
+  }
   if (!apiKey) {
     throw new Error(
       `No API key configured for provider "${providerId}". ` +
