@@ -14,14 +14,11 @@
 
 import { NextRequest } from 'next/server';
 import { statelessGenerate } from '@/lib/orchestration/stateless-generate';
-import { getModel, parseModelString } from '@/lib/ai/providers';
-import { resolveApiKey, resolveBaseUrl, resolveProxy } from '@/lib/server/provider-config';
-import { resolveCopilotToken } from '@/lib/server/copilot-token';
+import { resolveModel } from '@/lib/server/resolve-model';
 import type { StatelessChatRequest, StatelessEvent } from '@/lib/types/chat';
 import type { ThinkingConfig } from '@/lib/types/provider';
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
-import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 const log = createLogger('Chat API');
 
 // Allow streaming responses up to 60 seconds
@@ -62,45 +59,26 @@ export async function POST(req: NextRequest) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: config.agentIds');
     }
 
-    // Resolve API key: client > server > empty
-    const modelString = body.model || 'gpt-4o-mini';
-    const { providerId, modelId } = parseModelString(modelString);
-    const clientBaseUrl = body.baseUrl || undefined;
-    if (clientBaseUrl && process.env.NODE_ENV === 'production') {
-      const ssrfError = validateUrlForSSRF(clientBaseUrl);
-      if (ssrfError) {
-        return apiError('INVALID_URL', 403, ssrfError);
-      }
+    // Resolve model via the unified resolver (handles env, YAML, persisted Copilot token, etc.)
+    let resolved;
+    try {
+      resolved = await resolveModel({
+        modelString: body.model || undefined,
+        apiKey: body.apiKey || undefined,
+        baseUrl: body.baseUrl || undefined,
+      });
+    } catch (error) {
+      log.error('Model resolution failed:', error);
+      return apiError(
+        'INVALID_REQUEST',
+        401,
+        error instanceof Error ? error.message : 'Model resolution failed',
+      );
     }
 
-    let effectiveApiKey = clientBaseUrl
-      ? body.apiKey || ''
-      : resolveApiKey(providerId, body.apiKey);
-    let effectiveBaseUrl = clientBaseUrl
-      ? clientBaseUrl
-      : resolveBaseUrl(providerId, body.baseUrl);
-    const proxy = resolveProxy(providerId);
+    const { model: languageModel, modelString } = resolved;
 
-    // GitHub Copilot: exchange GitHub token for Copilot runtime token
-    if (providerId === 'github-copilot' && effectiveApiKey) {
-      try {
-        const copilotResult = await resolveCopilotToken(effectiveApiKey);
-        effectiveApiKey = copilotResult.token;
-        // Use the base URL derived from the Copilot token if not explicitly set
-        if (!body.baseUrl) {
-          effectiveBaseUrl = copilotResult.baseUrl;
-        }
-      } catch (error) {
-        log.error('Copilot token exchange failed:', error);
-        return apiError(
-          'INVALID_REQUEST',
-          401,
-          `GitHub Copilot authentication failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please re-login via Settings.`,
-        );
-      }
-    }
-
-    if (!effectiveApiKey) {
+    if (!modelString) {
       return apiError('MISSING_API_KEY', 401, 'API Key is required');
     }
 
@@ -108,15 +86,6 @@ export async function POST(req: NextRequest) {
     log.info(
       `Agents: ${body.config.agentIds.join(', ')}, Messages: ${body.messages.length}, Turn: ${body.directorState?.turnCount ?? 0}`,
     );
-
-    // Create LanguageModel via the unified provider system
-    const { model: languageModel } = getModel({
-      providerId,
-      modelId,
-      apiKey: effectiveApiKey,
-      baseUrl: effectiveBaseUrl,
-      proxy,
-    });
 
     // Use the native request signal for abort propagation
     const signal = req.signal;
@@ -152,10 +121,7 @@ export async function POST(req: NextRequest) {
         startHeartbeat();
 
         const generator = statelessGenerate(
-          {
-            ...body,
-            apiKey: effectiveApiKey,
-          },
+          body,
           signal,
           languageModel,
           { enabled: false } satisfies ThinkingConfig,
