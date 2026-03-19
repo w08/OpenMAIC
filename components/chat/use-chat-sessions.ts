@@ -21,7 +21,7 @@ import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { USER_AVATAR } from '@/lib/types/roundtable';
 import { processSSEStream } from './process-sse-stream';
 import { StreamBuffer } from '@/lib/buffer/stream-buffer';
-import type { AgentStartItem, ActionItem } from '@/lib/buffer/stream-buffer';
+import type { AgentStartItem, AgentEndItem, ActionItem } from '@/lib/buffer/stream-buffer';
 import { ActionEngine } from '@/lib/action/engine';
 import { toast } from 'sonner';
 import { createLogger } from '@/lib/logger';
@@ -179,7 +179,7 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
             onActiveBubbleRef.current?.(data.messageId);
           },
 
-          onAgentEnd() {
+          onAgentEnd(data: AgentEndItem) {
             // Remove empty assistant messages (agent started but produced no content)
             setSessions((prev) =>
               prev.map((s) => {
@@ -190,6 +190,27 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
                 return msgs.length !== s.messages.length ? { ...s, messages: msgs } : s;
               }),
             );
+
+            // Trigger browser TTS for discussion/QA sessions (don't pause the buffer —
+            // pausing conflicts with endSession/softPause which call shutdown()).
+            if (type !== 'lecture' && data.fullText && data.fullText.trim()) {
+              const settings = useSettingsStore.getState();
+              if (
+                settings.ttsEnabled &&
+                !settings.ttsMuted &&
+                typeof speechSynthesis !== 'undefined'
+              ) {
+                speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(data.fullText.trim());
+                if (settings.ttsVoice) {
+                  utterance.voice =
+                    speechSynthesis.getVoices().find((v) => v.name === settings.ttsVoice) || null;
+                }
+                utterance.rate = settings.ttsSpeed ?? 1.0;
+                utterance.volume = settings.ttsVolume ?? 1.0;
+                speechSynthesis.speak(utterance);
+              }
+            }
           },
 
           onTextReveal(
@@ -565,6 +586,9 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
       lectureMessageIds.current.delete(sessionId);
       lectureLastActionIndexRef.current.delete(sessionId);
 
+      // Stop any in-progress browser TTS
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+
       if (isLiveSession && wasStreaming) {
         // Append "..." + interrupted marker to last assistant message
         setSessions((prev) =>
@@ -647,6 +671,9 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
     const wasStreaming = !!(
       abortControllerRef.current && streamingSessionIdRef.current === sessionId
     );
+
+    // Stop any in-progress browser TTS
+    if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
 
     // Destroy buffer — no more ticks, no stale onDone/onLiveSpeech callbacks.
     // Resume will create a fresh buffer.
@@ -1393,12 +1420,18 @@ export function useChatSessions(options: UseChatSessionsOptions = {}) {
   const pauseBuffer = useCallback((sessionId: string) => {
     const buf = buffersRef.current.get(sessionId);
     if (buf) buf.pause();
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking) {
+      speechSynthesis.pause();
+    }
   }, []);
 
   /** Resume the buffer for a session. */
   const resumeBuffer = useCallback((sessionId: string) => {
     const buf = buffersRef.current.get(sessionId);
     if (buf) buf.resume();
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.paused) {
+      speechSynthesis.resume();
+    }
   }, []);
 
   return {

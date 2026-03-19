@@ -30,6 +30,8 @@ export interface AgentEndItem {
   kind: 'agent_end';
   messageId: string;
   agentId: string;
+  /** Full accumulated text from this agent's turn (for TTS). Set by the buffer at tick time. */
+  fullText?: string;
 }
 
 export interface TextItem {
@@ -157,6 +159,9 @@ export class StreamBuffer {
   // Roundtable segment tracking
   private currentSegmentText = '';
   private currentAgentId: string | null = null;
+
+  // Accumulated text for the current agent turn (attached to agent_end for TTS)
+  private fullAgentText = '';
 
   // Control
   private _paused = false;
@@ -443,6 +448,7 @@ export class StreamBuffer {
 
         // Advance to next item if fully revealed and sealed
         if (isComplete) {
+          this.fullAgentText += item.text;
           this.readIndex++;
           this.charCursor = 0;
 
@@ -465,6 +471,7 @@ export class StreamBuffer {
       case 'agent_start':
         this.currentAgentId = item.agentId;
         this.currentSegmentText = '';
+        this.fullAgentText = '';
         this.cb.onThinking(null); // Agent selected — clear thinking indicator
         this.cb.onAgentStart(item);
         this.cb.onLiveSpeech(null, item.agentId);
@@ -474,7 +481,9 @@ export class StreamBuffer {
         break;
 
       case 'agent_end':
+        item.fullText = this.fullAgentText;
         this.cb.onAgentEnd(item);
+        this.fullAgentText = '';
         this.readIndex++;
         this.charCursor = 0;
         this.advanceNonText();
@@ -552,12 +561,15 @@ export class StreamBuffer {
         case 'agent_start':
           this.currentAgentId = next.agentId;
           this.currentSegmentText = '';
+          this.fullAgentText = '';
           this.cb.onThinking(null); // Agent selected — clear thinking indicator
           this.cb.onAgentStart(next);
           this.cb.onLiveSpeech(null, next.agentId);
           break;
         case 'agent_end':
+          next.fullText = this.fullAgentText;
           this.cb.onAgentEnd(next);
+          this.fullAgentText = '';
           break;
         case 'action':
           this.currentSegmentText = '';
